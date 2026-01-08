@@ -1,6 +1,6 @@
 ![](https://www.codewars.com/users/Demian2435/badges/large)
 
-<a href="https://github.com/demian2435/demian2435">
+<a>
 <img src="https://github.com/demian2435/demian2435/blob/main/generated/overview.svg#gh-dark-mode-only" />
 <img src="https://github.com/demian2435/demian2435/blob/main/generated/languages.svg#gh-dark-mode-only" />
 </a>
