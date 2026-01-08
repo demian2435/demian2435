@@ -1,8 +1,9 @@
 ![](https://www.codewars.com/users/Demian2435/badges/large)
 
-![GitHub stats](https://github-readme-stats.vercel.app/api?username=demian2435&show_icons=true&theme=tokyonight)
-
-![Top Langs](https://github-readme-stats.vercel.app/api/top-langs/?username=demian2435&langs_count=10&show_icons=true&theme=tokyonight)
+<a href="https://github.com/demian2435/github-stats">
+<img src="https://github.com/demian2435/github-stats/blob/master/generated/overview.svg#gh-dark-mode-only" />
+<img src="https://github.com/demian2435/github-stats/blob/master/generated/languages.svg#gh-dark-mode-only" />
+</a>
 
 ## Disclaimer and Privacy Considerations
 
