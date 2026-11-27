@@ -28,9 +28,69 @@ LIBRARY_DIRECTORIES = {
     "vendors",
 }
 
+LANGUAGE_BY_EXTENSION = {
+    ".c": ("C", "#555555"),
+    ".h": ("C", "#555555"),
+    ".cc": ("C++", "#f34b7d"),
+    ".cpp": ("C++", "#f34b7d"),
+    ".cxx": ("C++", "#f34b7d"),
+    ".hh": ("C++", "#f34b7d"),
+    ".hpp": ("C++", "#f34b7d"),
+    ".hxx": ("C++", "#f34b7d"),
+    ".cs": ("C#", "#178600"),
+    ".css": ("CSS", "#663399"),
+    ".dart": ("Dart", "#00B4AB"),
+    ".ex": ("Elixir", "#6e4a7e"),
+    ".exs": ("Elixir", "#6e4a7e"),
+    ".fs": ("F#", "#b845fc"),
+    ".fsx": ("F#", "#b845fc"),
+    ".go": ("Go", "#00ADD8"),
+    ".hs": ("Haskell", "#5e5086"),
+    ".html": ("HTML", "#e34c26"),
+    ".htm": ("HTML", "#e34c26"),
+    ".java": ("Java", "#b07219"),
+    ".js": ("JavaScript", "#f1e05a"),
+    ".cjs": ("JavaScript", "#f1e05a"),
+    ".mjs": ("JavaScript", "#f1e05a"),
+    ".jsx": ("JavaScript", "#f1e05a"),
+    ".json": ("JSON", "#292929"),
+    ".jl": ("Julia", "#a270ba"),
+    ".kt": ("Kotlin", "#A97BFF"),
+    ".kts": ("Kotlin", "#A97BFF"),
+    ".lua": ("Lua", "#000080"),
+    ".md": ("Markdown", "#083fa1"),
+    ".markdown": ("Markdown", "#083fa1"),
+    ".m": ("Objective-C", "#438eff"),
+    ".mm": ("Objective-C++", "#6866fb"),
+    ".ml": ("OCaml", "#ef7a08"),
+    ".mli": ("OCaml", "#ef7a08"),
+    ".pl": ("Perl", "#0298c3"),
+    ".pm": ("Perl", "#0298c3"),
+    ".php": ("PHP", "#4F5D95"),
+    ".py": ("Python", "#3572A5"),
+    ".pyi": ("Python", "#3572A5"),
+    ".pyw": ("Python", "#3572A5"),
+    ".r": ("R", "#198CE7"),
+    ".rb": ("Ruby", "#701516"),
+    ".rs": ("Rust", "#dea584"),
+    ".scala": ("Scala", "#c22d40"),
+    ".scss": ("SCSS", "#c6538c"),
+    ".sh": ("Shell", "#89e051"),
+    ".bash": ("Shell", "#89e051"),
+    ".zsh": ("Shell", "#89e051"),
+    ".sql": ("SQL", "#e38c00"),
+    ".swift": ("Swift", "#F05138"),
+    ".toml": ("TOML", "#9c4221"),
+    ".ts": ("TypeScript", "#3178c6"),
+    ".tsx": ("TypeScript", "#3178c6"),
+    ".xml": ("XML", "#0060ac"),
+    ".yaml": ("YAML", "#cb171e"),
+    ".yml": ("YAML", "#cb171e"),
+}
+
 
 def is_excluded_library_file(path: str, excluded_paths: Set[str]) -> bool:
-    """Return whether a changed file belongs to a library/dependency path."""
+    """Return whether a file belongs to a library/dependency path."""
     normalized_path = path.replace("\\", "/").strip("/")
     path_parts = normalized_path.lower().split("/")
     for pattern in excluded_paths:
@@ -77,7 +137,7 @@ class Queries(object):
         :return: decoded GraphQL JSON output
         """
         headers = {
-            "Authorization": f"Bearer {self.access_token}",
+            "Authorization": "bearer " + self.access_token,
         }
         try:
             async with self.semaphore:
@@ -184,13 +244,10 @@ class Queries(object):
           totalCount
         }}
         forkCount
-        languages(first: 10, orderBy: {{field: SIZE, direction: DESC}}) {{
-          edges {{
-            size
-            node {{
-              name
-              color
-            }}
+        defaultBranchRef {{
+          name
+          target {{
+            oid
           }}
         }}
       }}
@@ -220,13 +277,10 @@ class Queries(object):
           totalCount
         }}
         forkCount
-        languages(first: 10, orderBy: {{field: SIZE, direction: DESC}}) {{
-          edges {{
-            size
-            node {{
-              name
-              color
-            }}
+        defaultBranchRef {{
+          name
+          target {{
+            oid
           }}
         }}
       }}
@@ -313,6 +367,8 @@ class Stats(object):
         self._repos: Optional[Set[str]] = None
         self._lines_changed: Optional[Tuple[int, int]] = None
         self._views: Optional[int] = None
+        self._stats_loaded = False
+        self._stats_lock = asyncio.Lock()
 
     async def to_str(self) -> str:
         """
@@ -339,6 +395,15 @@ Languages:
         """
         Get lots of summary statistics using one big query. Sets many attributes
         """
+        if self._stats_loaded:
+            return
+        async with self._stats_lock:
+            if self._stats_loaded:
+                return
+            await self._load_stats()
+            self._stats_loaded = True
+
+    async def _load_stats(self) -> None:
         self._stargazers = 0
         self._forks = 0
         self._languages = dict()
@@ -381,26 +446,25 @@ Languages:
                 if repo is None:
                     continue
                 name = repo.get("nameWithOwner")
+                if not isinstance(name, str):
+                    continue
                 if name in self._repos or name in self._exclude_repos:
                     continue
                 self._repos.add(name)
                 self._stargazers += repo.get("stargazers").get("totalCount", 0)
                 self._forks += repo.get("forkCount", 0)
 
-                for lang in repo.get("languages", {}).get("edges", []):
-                    name = lang.get("node", {}).get("name", "Other")
-                    languages = await self.languages
-                    if name.lower() in exclude_langs_lower:
-                        continue
-                    if name in languages:
-                        languages[name]["size"] += lang.get("size", 0)
-                        languages[name]["occurrences"] += 1
-                    else:
-                        languages[name] = {
-                            "size": lang.get("size", 0),
-                            "occurrences": 1,
-                            "color": lang.get("node", {}).get("color"),
-                        }
+                default_branch_ref = repo.get("defaultBranchRef")
+                if default_branch_ref:
+                    default_branch = default_branch_ref.get("name")
+                    tree_oid = (default_branch_ref.get("target") or {}).get("oid")
+                    if not default_branch or not tree_oid:
+                        raise RuntimeError(
+                            f"Unable to determine the default-branch Git tree for {name}."
+                        )
+                    await self._add_repo_languages(
+                        name, default_branch, tree_oid, exclude_langs_lower
+                    )
 
             if owned_repos.get("pageInfo", {}).get(
                 "hasNextPage", False
@@ -414,20 +478,83 @@ Languages:
             else:
                 break
 
-        # TODO: Improve languages to scale by number of contributions to
-        #       specific filetypes
         langs_total = sum([v.get("size", 0) for v in self._languages.values()])
         for k, v in self._languages.items():
-            v["prop"] = 100 * (v.get("size", 0) / langs_total)
+            v["prop"] = 100 * (v.get("size", 0) / langs_total) if langs_total else 0
+
+    async def _add_repo_languages(
+        self,
+        repo: str,
+        default_branch: str,
+        tree_oid: str,
+        exclude_langs_lower: Set[str],
+    ) -> None:
+        tree_result = await self.queries.query_rest(
+            f"/repos/{repo}/git/trees/{tree_oid}", params={"recursive": "1"}
+        )
+        if not isinstance(tree_result, dict) or not isinstance(
+            tree_result.get("truncated"), bool
+        ):
+            raise RuntimeError(
+                f"Unable to scan the complete Git tree for {repo} "
+                f"({default_branch}): invalid or incomplete response."
+            )
+        if tree_result["truncated"]:
+            raise RuntimeError(
+                f"Unable to scan the complete Git tree for {repo} "
+                f"({default_branch}): GitHub marked the recursive tree as truncated."
+            )
+        tree = tree_result.get("tree")
+        if not isinstance(tree, list):
+            raise RuntimeError(
+                f"Unable to scan the complete Git tree for {repo} "
+                f"({default_branch}): response did not contain a tree."
+            )
+
+        repo_languages: Dict[str, Dict[str, Any]] = {}
+        for entry in tree:
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                raise RuntimeError(
+                    f"Unable to scan the complete Git tree for {repo} "
+                    f"({default_branch}): tree contains an invalid entry."
+                )
+            if entry.get("type") != "blob":
+                continue
+            path = entry["path"]
+            if is_excluded_library_file(path, self._exclude_paths):
+                continue
+            language_info = LANGUAGE_BY_EXTENSION.get(os.path.splitext(path)[1].lower())
+            if language_info is None:
+                continue
+            language, color = language_info
+            if language.lower() in exclude_langs_lower:
+                continue
+            size = entry.get("size")
+            if not isinstance(size, int) or size < 0:
+                raise RuntimeError(
+                    f"Unable to scan the complete Git tree for {repo} "
+                    f"({default_branch}): file size is missing for {path}."
+                )
+            language_data = repo_languages.setdefault(
+                language, {"size": 0, "occurrences": 0, "color": color}
+            )
+            language_data["size"] += size
+
+        for language, data in repo_languages.items():
+            if language in self._languages:
+                self._languages[language]["size"] += data["size"]
+                self._languages[language]["occurrences"] += 1
+            else:
+                data["occurrences"] = 1
+                self._languages[language] = data
 
     @property
     async def name(self) -> str:
         """
         :return: GitHub user's name (e.g., Jacob Strieb)
         """
-        if self._name is not None:
-            return self._name
-        await self.get_stats()
+        if not self._stats_loaded:
+            await self.get_stats()
         assert self._name is not None
         return self._name
 
@@ -436,9 +563,8 @@ Languages:
         """
         :return: total number of stargazers on user's repos
         """
-        if self._stargazers is not None:
-            return self._stargazers
-        await self.get_stats()
+        if not self._stats_loaded:
+            await self.get_stats()
         assert self._stargazers is not None
         return self._stargazers
 
@@ -447,9 +573,8 @@ Languages:
         """
         :return: total number of forks on user's repos
         """
-        if self._forks is not None:
-            return self._forks
-        await self.get_stats()
+        if not self._stats_loaded:
+            await self.get_stats()
         assert self._forks is not None
         return self._forks
 
@@ -458,9 +583,8 @@ Languages:
         """
         :return: summary of languages used by the user
         """
-        if self._languages is not None:
-            return self._languages
-        await self.get_stats()
+        if not self._stats_loaded:
+            await self.get_stats()
         assert self._languages is not None
         return self._languages
 
@@ -469,7 +593,7 @@ Languages:
         """
         :return: summary of languages used by the user, with proportional usage
         """
-        if self._languages is None:
+        if not self._stats_loaded:
             await self.get_stats()
             assert self._languages is not None
 
@@ -480,9 +604,8 @@ Languages:
         """
         :return: list of names of user's repos
         """
-        if self._repos is not None:
-            return self._repos
-        await self.get_stats()
+        if not self._stats_loaded:
+            await self.get_stats()
         assert self._repos is not None
         return self._repos
 
