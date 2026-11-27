@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import asyncio
+import fnmatch
 import os
 from typing import Dict, List, Optional, Set, Tuple, Any, cast
 
@@ -11,6 +12,43 @@ import requests
 ###############################################################################
 # Main Classes
 ###############################################################################
+
+LIBRARY_DIRECTORIES = {
+    "bower_components",
+    "deps",
+    "external",
+    "lib",
+    "libraries",
+    "library",
+    "libs",
+    "node_modules",
+    "third-party",
+    "third_party",
+    "vendor",
+    "vendors",
+}
+
+
+def is_excluded_library_file(path: str, excluded_paths: Set[str]) -> bool:
+    """Return whether a changed file belongs to a library/dependency path."""
+    normalized_path = path.replace("\\", "/").strip("/")
+    path_parts = normalized_path.lower().split("/")
+    for pattern in excluded_paths:
+        normalized_pattern = pattern.replace("\\", "/").strip("/").lower()
+        if not normalized_pattern:
+            continue
+        if any(char in normalized_pattern for char in "*?["):
+            if fnmatch.fnmatchcase(normalized_path.lower(), normalized_pattern):
+                return True
+        elif "/" in normalized_pattern:
+            if (
+                normalized_path.lower() == normalized_pattern
+                or normalized_path.lower().startswith(normalized_pattern + "/")
+            ):
+                return True
+        elif normalized_pattern in path_parts:
+            return True
+    return False
 
 
 class Queries(object):
@@ -258,11 +296,13 @@ class Stats(object):
         exclude_repos: Optional[Set] = None,
         exclude_langs: Optional[Set] = None,
         ignore_forked_repos: bool = False,
+        exclude_paths: Optional[Set[str]] = None,
     ):
         self.username = username
         self._ignore_forked_repos = ignore_forked_repos
         self._exclude_repos = set() if exclude_repos is None else exclude_repos
         self._exclude_langs = set() if exclude_langs is None else exclude_langs
+        self._exclude_paths = LIBRARY_DIRECTORIES | (exclude_paths or set())
         self.queries = Queries(username, access_token, session)
 
         self._name: Optional[str] = None
@@ -477,27 +517,54 @@ Languages:
     @property
     async def lines_changed(self) -> Tuple[int, int]:
         """
-        :return: count of total lines added, removed, or modified by the user
+        :return: count of total non-library lines added and deleted by the user
         """
         if self._lines_changed is not None:
             return self._lines_changed
         additions = 0
         deletions = 0
         for repo in await self.repos:
-            r = await self.queries.query_rest(f"/repos/{repo}/stats/contributors")
-            for author_obj in r:
-                # Handle malformed response from the API by skipping this repo
-                if not isinstance(author_obj, dict) or not isinstance(
-                    author_obj.get("author", {}), dict
-                ):
-                    continue
-                author = author_obj.get("author", {}).get("login", "")
-                if author != self.username:
-                    continue
+            page = 1
+            while True:
+                commits = await self.queries.query_rest(
+                    f"/repos/{repo}/commits",
+                    params={
+                        "author": self.username,
+                        "per_page": 100,
+                        "page": page,
+                    },
+                )
+                if not isinstance(commits, list) or not commits:
+                    break
 
-                for week in author_obj.get("weeks", []):
-                    additions += week.get("a", 0)
-                    deletions += week.get("d", 0)
+                for commit_obj in commits:
+                    if not isinstance(commit_obj, dict) or not commit_obj.get("sha"):
+                        continue
+                    commit = await self.queries.query_rest(
+                        f"/repos/{repo}/commits/{commit_obj['sha']}"
+                    )
+                    if not isinstance(commit, dict):
+                        continue
+                    author = commit.get("author")
+                    if (
+                        not isinstance(author, dict)
+                        or author.get("login") != self.username
+                    ):
+                        continue
+                    for changed_file in commit.get("files") or []:
+                        if not isinstance(changed_file, dict):
+                            continue
+                        filename = changed_file.get("filename")
+                        if not isinstance(filename, str) or is_excluded_library_file(
+                            filename, self._exclude_paths
+                        ):
+                            continue
+                        additions += changed_file.get("additions") or 0
+                        deletions += changed_file.get("deletions") or 0
+
+                if len(commits) < 100:
+                    break
+                page += 1
 
         self._lines_changed = (additions, deletions)
         return self._lines_changed

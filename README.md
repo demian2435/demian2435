@@ -1,6 +1,11 @@
 ![](https://www.codewars.com/users/Demian2435/badges/large)
 GitHub user #28110775
 
+Lines-of-code statistics exclude files under common dependency directories,
+including `vendor`, `node_modules`, `lib`, and `third_party`. Set the optional
+`EXCLUDED_PATHS` environment variable to a comma-separated list of additional
+directory names, repository-relative paths, or glob patterns to exclude.
+
 <p>
 <img src="https://github.com/demian2435/demian2435/blob/main/generated/overview.svg#gh-dark-mode-only" />
 <img src="https://github.com/demian2435/demian2435/blob/main/generated/languages.svg#gh-dark-mode-only" />
